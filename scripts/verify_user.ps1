@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    Verifica se um usuário já existe no AD, se está desativado, ou se há nomes similares.
+    Verifica se um usuario ja existe no AD, se esta desativado, ou se ha nomes similares.
 .DESCRIPTION
-    Realiza uma busca completa no AD antes da criação de um novo usuário.
+    Realiza uma busca completa no AD antes da criacao de um novo usuario.
 .PARAMETER Login
     Login a ser verificado (SamAccountName)
 .PARAMETER NomeCompleto
@@ -28,14 +28,14 @@ $resultado = @{
 }
 
 try {
-    # Verificar se o módulo ActiveDirectory está disponível
+    # Verificar se o modulo ActiveDirectory esta disponivel
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
-        throw "Módulo ActiveDirectory não está instalado."
+        throw "Modulo ActiveDirectory nao esta instalado."
     }
     
     Import-Module ActiveDirectory -ErrorAction Stop
     
-    # 1. Verificar se o login exato já existe
+    # 1. Verificar se o login exato ja existe
     $usuarioExato = Get-ADUser -Filter "SamAccountName -eq '$Login'" -Properties Enabled, DisplayName, Description, WhenCreated, LastLogonDate -ErrorAction SilentlyContinue
     
     if ($usuarioExato) {
@@ -45,17 +45,17 @@ try {
         $status = if ($usuarioExato.Enabled) { "ATIVO" } else { "DESATIVADO" }
         $resultado.usuario_desativado = -not $usuarioExato.Enabled
         
-        $resultado.mensagens += "⚠️ USUÁRIO JÁ EXISTE: $Login ($status)"
+        $resultado.mensagens += "[AVISO] USUARIO JA EXISTE: $Login ($status)"
         $resultado.mensagens += "   Nome: $($usuarioExato.DisplayName)"
-        $resultado.mensagens += "   Descrição: $($usuarioExato.Description)"
+        $resultado.mensagens += "   Descricao: $($usuarioExato.Description)"
         $resultado.mensagens += "   Criado em: $($usuarioExato.WhenCreated)"
-        $resultado.mensagens += "   Último login: $($usuarioExato.LastLogonDate)"
+        $resultado.mensagens += "   Ultimo login: $($usuarioExato.LastLogonDate)"
     }
     else {
-        $resultado.mensagens += "✅ Login '$Login' está disponível."
+        $resultado.mensagens += "[OK] Login '$Login' esta disponivel."
     }
     
-    # 2. Buscar usuários com nomes similares
+    # 2. Buscar usuarios com nomes similares
     if ($NomeCompleto -ne "") {
         $partes = $NomeCompleto.Trim() -split '\s+'
         $primeiroNome = $partes[0]
@@ -96,51 +96,53 @@ try {
         
         if ($todosSimilares.Count -gt 0) {
             $resultado.mensagens += ""
-            $resultado.mensagens += "📋 USUÁRIOS COM NOMES SIMILARES ENCONTRADOS: $($todosSimilares.Count)"
-            $resultado.mensagens += "-" * 60
+            $resultado.mensagens += "[INFO] USUARIOS COM NOMES SIMILARES ENCONTRADOS: $($todosSimilares.Count)"
+            $resultado.mensagens += ("-" * 60)
             
             foreach ($similar in $todosSimilares) {
-                $statusIcon = if ($similar.ativo) { "🟢" } else { "🔴" }
+                $statusIcon = if ($similar.ativo) { "[+]" } else { "[-]" }
                 $resultado.mensagens += "$statusIcon $($similar.login) - $($similar.nome) [$($similar.status)]"
             }
         }
         else {
             $resultado.mensagens += ""
-            $resultado.mensagens += "ℹ️ Nenhum usuário com nome similar encontrado."
+            $resultado.mensagens += "[INFO] Nenhum usuario com nome similar encontrado."
         }
     }
     
-    # 3. Verificar logins similares (variações)
-    $variacoes = @(
-        "$($primeiroNome.ToLower()).$($ultimoNome.ToLower())",
-        "$($primeiroNome.Substring(0,1).ToLower())$($ultimoNome.ToLower())",
-        "$($primeiroNome.ToLower())$($ultimoNome.Substring(0,1).ToLower())"
-    )
-    
-    $loginsSimilares = @()
-    foreach ($variacao in $variacoes) {
-        if ($variacao -ne $Login -and $variacao.Length -gt 2) {
-            $userVariacao = Get-ADUser -Filter "SamAccountName -like '$variacao*'" -Properties Enabled, DisplayName -ErrorAction SilentlyContinue | Select-Object -First 5
-            foreach ($u in $userVariacao) {
-                if ($u -and $u.SamAccountName -ne $Login) {
-                    $status = if ($u.Enabled) { "ATIVO" } else { "DESATIVADO" }
-                    $loginsSimilares += "$($u.SamAccountName) - $($u.DisplayName) [$status]"
+    # 3. Verificar logins similares (variacoes)
+    if ($NomeCompleto -ne "" -and $partes.Count -gt 1) {
+        $variacoes = @(
+            "$($primeiroNome.ToLower()).$($ultimoNome.ToLower())",
+            "$($primeiroNome.Substring(0,1).ToLower())$($ultimoNome.ToLower())",
+            "$($primeiroNome.ToLower())$($ultimoNome.Substring(0,1).ToLower())"
+        )
+        
+        $loginsSimilares = @()
+        foreach ($variacao in $variacoes) {
+            if ($variacao -ne $Login -and $variacao.Length -gt 2) {
+                $userVariacao = Get-ADUser -Filter "SamAccountName -like '$variacao*'" -Properties Enabled, DisplayName -ErrorAction SilentlyContinue | Select-Object -First 5
+                foreach ($u in $userVariacao) {
+                    if ($u -and $u.SamAccountName -ne $Login) {
+                        $status = if ($u.Enabled) { "ATIVO" } else { "DESATIVADO" }
+                        $loginsSimilares += "$($u.SamAccountName) - $($u.DisplayName) [$status]"
+                    }
                 }
             }
         }
-    }
-    
-    if ($loginsSimilares.Count -gt 0) {
-        $resultado.mensagens += ""
-        $resultado.mensagens += "🔍 LOGINS SIMILARES:"
-        foreach ($ls in ($loginsSimilares | Select-Object -Unique)) {
-            $resultado.mensagens += "   $ls"
+        
+        if ($loginsSimilares.Count -gt 0) {
+            $resultado.mensagens += ""
+            $resultado.mensagens += "[INFO] LOGINS SIMILARES:"
+            foreach ($ls in ($loginsSimilares | Select-Object -Unique)) {
+                $resultado.mensagens += "   $ls"
+            }
         }
     }
     
 }
 catch {
-    $resultado.mensagens += "❌ ERRO: $($_.Exception.Message)"
+    $resultado.mensagens += "[ERRO] $($_.Exception.Message)"
     $resultado.pode_criar = $false
 }
 

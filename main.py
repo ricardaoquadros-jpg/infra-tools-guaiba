@@ -481,7 +481,7 @@ class InfraToolsApp:
             self.verificacao_result.config(state=tk.DISABLED)
     
     def criar_usuario_novo(self):
-        """Cria o usuário no AD."""
+        """Gera o comando PowerShell para criar usuário no servidor."""
         nome = self.entry_nome_novo.get().strip()
         login = self.entry_login_novo.get().strip()
         setor = self.combo_setor_novo.get()
@@ -509,65 +509,85 @@ class InfraToolsApp:
         # Email gerado
         email = f"{login}@guaiba.rs.gov.br"
         
+        # Separar primeiro nome e sobrenome
+        partes = nome.split()
+        primeiro_nome = partes[0]
+        sobrenome = " ".join(partes[1:]) if len(partes) > 1 else ""
+        
+        # Gerar comando PowerShell para executar NO SERVIDOR
+        cmd_ps = f'''# ============================================
+# COMANDO PARA CRIAR USUARIO NO AD
+# Execute este comando no servidor como Admin
+# ============================================
+
+# Dados do usuario
+$Nome = "{nome}"
+$Login = "{login}"
+$Senha = ConvertTo-SecureString -String "{senha}" -AsPlainText -Force
+$OU = "{ou}"
+
+# Criar usuario
+New-ADUser `
+    -Name "{nome}" `
+    -GivenName "{primeiro_nome}" `
+    -Surname "{sobrenome}" `
+    -SamAccountName "{login}" `
+    -UserPrincipalName "{email}" `
+    -DisplayName "{nome}" `
+    -EmailAddress "{email}" `
+    -Description "{cpf}" `
+    -Office "{cargo}" `
+    -Title "{cargo}" `
+    -Department "{setor}" `
+    -OfficePhone "{telefone}" `
+    -Path "{ou}" `
+    -AccountPassword $Senha `
+    -Enabled $true `
+    -ChangePasswordAtLogon $true
+
+# Adicionar aos grupos
+{chr(10).join([f'Add-ADGroupMember -Identity "{g}" -Members "{login}"' for g in grupos])}
+
+Write-Host "Usuario {login} criado com sucesso!"
+Write-Host "Senha: {senha}"
+'''
+        
+        # Mostrar resultado
         self.resultado_criacao.delete(1.0, tk.END)
-        self.resultado_criacao.insert(tk.END, "⏳ Criando usuário...\n")
-        self.root.update()
+        self.resultado_criacao.insert(tk.END, f"COMANDO GERADO - COPIE E COLE NO SERVIDOR:\n\n")
+        self.resultado_criacao.insert(tk.END, cmd_ps)
         
-        script_path = self.base_dir / "scripts" / "create_ad_user.ps1"
+        # Copiar para area de transferencia
+        self.root.clipboard_clear()
+        self.root.clipboard_append(cmd_ps)
         
-        cmd = [
-            "powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path),
-            "-NomeCompleto", nome,
-            "-Login", login,
-            "-Setor", setor,
-            "-Cargo", cargo,
-            "-Senha", senha,
-            "-OU", ou,
-            "-Grupos", ",".join(grupos),
-            "-CPF", cpf,
-            "-Telefone", telefone
-        ]
+        # Mostrar resumo
+        self.console_print(f"\n{'='*60}\n")
+        self.console_print(f"COMANDO GERADO PARA CRIAR USUARIO\n")
+        self.console_print(f"{'='*60}\n")
+        self.console_print(f"Login: {login}\n")
+        self.console_print(f"Email: {email}\n")
+        self.console_print(f"Senha: {senha}\n")
+        self.console_print(f"OU: {ou}\n")
+        self.console_print(f"\nCOMANDO COPIADO PARA A AREA DE TRANSFERENCIA!\n")
+        self.console_print(f"Cole no PowerShell do servidor (Admin) e execute.\n")
         
-        if self.dry_run_var_novo.get():
-            cmd.append("-DryRun")
+        # Log
+        self.log_evento("GERAR_COMANDO_USUARIO", f"Comando gerado para {login}", {
+            "login": login, "nome": nome, "setor": setor, "email": email
+        })
         
-        try:
-            resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            self.resultado_criacao.delete(1.0, tk.END)
-            
-            if resultado.stdout:
-                try:
-                    resposta = json.loads(resultado.stdout.strip())
-                    
-                    if resposta.get("sucesso"):
-                        modo = "SIMULAÇÃO" if self.dry_run_var_novo.get() else "PRODUÇÃO"
-                        self.resultado_criacao.insert(tk.END, f"✅ USUÁRIO CRIADO ({modo})!\n\n")
-                        self.resultado_criacao.insert(tk.END, f"Login: {login}\n")
-                        self.resultado_criacao.insert(tk.END, f"Senha: {senha}\n")
-                        self.resultado_criacao.insert(tk.END, f"OU: {ou}\n")
-                        self.resultado_criacao.insert(tk.END, f"Grupos: {', '.join(grupos)}\n")
-                        
-                        # Atualizar comando no servidor
-                        self.atualizar_comando_servidor(nome, login, setor, cargo, senha, ou, grupos)
-                        
-                        self.log_evento("CRIAR_USUARIO", f"Usuário {login} criado", {
-                            "login": login, "nome": nome, "setor": setor
-                        })
-                        
-                        if not self.dry_run_var_novo.get():
-                            messagebox.showinfo("Sucesso", f"Usuário '{login}' criado!\n\nSenha: {senha}")
-                    else:
-                        self.resultado_criacao.insert(tk.END, f"❌ Erro: {resposta.get('mensagem')}")
-                
-                except json.JSONDecodeError:
-                    self.resultado_criacao.insert(tk.END, resultado.stdout)
-            else:
-                self.resultado_criacao.insert(tk.END, f"Erro: {resultado.stderr}")
-                
-        except Exception as e:
-            self.resultado_criacao.delete(1.0, tk.END)
-            self.resultado_criacao.insert(tk.END, f"Erro: {e}")
+        # Avisar usuario
+        messagebox.showinfo(
+            "Comando Gerado!",
+            f"O comando PowerShell foi COPIADO para a area de transferencia!\n\n"
+            f"Login: {login}\n"
+            f"Senha: {senha}\n\n"
+            f"Agora:\n"
+            f"1. Conecte ao servidor via RDP\n"
+            f"2. Abra o PowerShell como Administrador\n"
+            f"3. Cole (Ctrl+V) e execute o comando"
+        )
     
     def copiar_resultado_novo(self):
         """Copia resultado para área de transferência."""

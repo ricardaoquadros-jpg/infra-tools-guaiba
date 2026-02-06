@@ -33,11 +33,11 @@
     },
     "dry_run": false,
     "mremoteng": {
-        "caminho_executavel": "C:\\Program Files (x86)\\mRemoteNG\\mRemoteNG.exe",
+        "caminho_executavel": "C:/Users/ricardo.quadros/Downloads/mRemoteNG-Portable-1.76.20.24669/mRemoteNG.exe",
         "servidor_ad": {
-            "nome": "Servidor AD",
-            "hostname": "dc01.guaiba.local",
-            "usuario": "",
+            "nome": "SRVWDC02",
+            "hostname": "172.16.0.26",
+            "usuario": "admin.ricardo",
             "protocolo": "RDP"
         }
     }
