@@ -1,0 +1,6 @@
+# Infra Tools Guaíba
+# Dependências mínimas - usa apenas bibliotecas padrão do Python
+# Tkinter já está incluso no Python padrão do Windows
+
+# Para build do executável portátil
+pyinstaller>=6.0.0

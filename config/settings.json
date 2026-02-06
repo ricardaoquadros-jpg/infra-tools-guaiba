@@ -1,0 +1,44 @@
+{
+    "domain": "GUAIBA.LOCAL",
+    "ous": {
+        "Administrativo": "OU=Usuarios,OU=Administrativo,DC=GUAIBA,DC=LOCAL",
+        "Educacao": "OU=Usuarios,OU=Educacao,DC=GUAIBA,DC=LOCAL",
+        "Saude": "OU=Usuarios,OU=Saude,DC=GUAIBA,DC=LOCAL"
+    },
+    "grupos_padrao": [
+        "Grupo_Usuarios_Dominio",
+        "Grupo_VPN",
+        "Grupo_Email"
+    ],
+    "grupos_por_setor": {
+        "Administrativo": [
+            "Grupo_Administrativo",
+            "Grupo_Pastas_Admin"
+        ],
+        "Educacao": [
+            "Grupo_Educacao",
+            "Grupo_Pastas_Edu"
+        ],
+        "Saude": [
+            "Grupo_Saude",
+            "Grupo_Pastas_Saude"
+        ]
+    },
+    "senha": {
+        "tamanho": 12,
+        "incluir_maiusculas": true,
+        "incluir_minusculas": true,
+        "incluir_numeros": true,
+        "incluir_especiais": true
+    },
+    "dry_run": false,
+    "mremoteng": {
+        "caminho_executavel": "C:\\Program Files (x86)\\mRemoteNG\\mRemoteNG.exe",
+        "servidor_ad": {
+            "nome": "Servidor AD",
+            "hostname": "dc01.guaiba.local",
+            "usuario": "",
+            "protocolo": "RDP"
+        }
+    }
+}
