@@ -354,6 +354,12 @@ try {{
             command=self.verificar_usuario_remoto
         ).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(
+            btn_frame2,
+            text="📋 Copiar Comando (Manual)",
+            command=self.copiar_comando_verificacao
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Resultado da verificação
         self.verificacao_result = scrolledtext.ScrolledText(step2_frame, height=5, font=("Consolas", 9))
         self.verificacao_result.pack(fill=tk.X, pady=5)
@@ -585,6 +591,73 @@ try {{
             self.verificacao_result.delete(1.0, tk.END)
             self.verificacao_result.insert(tk.END, f"Erro: {e}")
             self.verificacao_result.config(state=tk.DISABLED)
+            
+    def copiar_comando_verificacao(self):
+        """Gera e copia o comando de verificação para executar manualmente no servidor."""
+        nome = self.entry_nome_novo.get().strip()
+        login = self.entry_login_novo.get().strip()
+        
+        if not login:
+            messagebox.showwarning("Aviso", "Preencha o login primeiro.")
+            return
+        
+        # Gerar comando PowerShell de verificação
+        cmd = f'''# Comando de Verificação de Usuário AD
+# Execute no PowerShell do servidor como Admin
+
+$login = "{login}"
+$nome = "{nome}"
+
+Write-Host "=== VERIFICANDO USUARIO ===" -ForegroundColor Cyan
+Write-Host "Login: $login"
+Write-Host "Nome: $nome"
+Write-Host ""
+
+# 1. Verificar se login existe
+$user = Get-ADUser -Filter "SamAccountName -eq '$login'" -Properties Enabled,DisplayName -ErrorAction SilentlyContinue
+if ($user) {{
+    if ($user.Enabled) {{
+        Write-Host "[ERRO] Usuario '$login' JA EXISTE e esta ATIVO!" -ForegroundColor Red
+    }} else {{
+        Write-Host "[AVISO] Usuario '$login' existe mas esta DESATIVADO" -ForegroundColor Yellow
+    }}
+    Write-Host "Nome atual: $($user.DisplayName)"
+}} else {{
+    Write-Host "[OK] Login '$login' esta DISPONIVEL!" -ForegroundColor Green
+}}
+
+# 2. Buscar usuarios similares pelo nome
+Write-Host ""
+Write-Host "=== USUARIOS SIMILARES ===" -ForegroundColor Cyan
+$primeiroNome = ($nome -split " ")[0]
+$similares = Get-ADUser -Filter "Name -like '*$primeiroNome*' -or DisplayName -like '*$primeiroNome*'" -Properties DisplayName,Enabled | Select-Object SamAccountName,DisplayName,Enabled
+if ($similares) {{
+    $similares | Format-Table -AutoSize
+}} else {{
+    Write-Host "Nenhum usuario similar encontrado."
+}}
+'''
+        
+        # Copiar para área de transferência
+        self.root.clipboard_clear()
+        self.root.clipboard_append(cmd)
+        
+        # Atualizar área de resultado
+        self.verificacao_result.config(state=tk.NORMAL)
+        self.verificacao_result.delete(1.0, tk.END)
+        self.verificacao_result.insert(tk.END, "📋 COMANDO COPIADO!\n\n")
+        self.verificacao_result.insert(tk.END, "Agora:\n")
+        self.verificacao_result.insert(tk.END, "1. Conecte no servidor via RDP\n")
+        self.verificacao_result.insert(tk.END, "2. Abra PowerShell como Admin\n")
+        self.verificacao_result.insert(tk.END, "3. Cole (Ctrl+V) e execute\n")
+        self.verificacao_result.insert(tk.END, f"\nVerificando: {login}\n")
+        self.verificacao_result.config(state=tk.DISABLED)
+        
+        # Habilitar botão criar (já que não temos como verificar remotamente)
+        self.btn_criar_novo.config(state=tk.NORMAL)
+        self.status_verificacao.config(text="📋 Comando copiado - verifique manualmente", foreground="blue")
+        
+        messagebox.showinfo("Copiado!", "Comando de verificação copiado!\n\nCole no PowerShell do servidor e execute.")
             
     def verificar_usuario_remoto(self):
         """Verifica usuário remotamente via Invoke-Command (em thread separada)."""
