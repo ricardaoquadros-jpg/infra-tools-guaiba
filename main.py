@@ -87,6 +87,82 @@ class InfraToolsApp:
         
         return default_config
     
+    def get_cred_file_path(self):
+        """Retorna o caminho do arquivo de credenciais."""
+        return self.base_dir / "config" / ".cred_admin.xml"
+    
+    def tem_credencial_salva(self):
+        """Verifica se existe credencial salva."""
+        return self.get_cred_file_path().exists()
+    
+    def salvar_credencial_via_powershell(self):
+        """Abre dialog para salvar credenciais usando PowerShell."""
+        cred_file = self.get_cred_file_path()
+        
+        # PowerShell para pedir e salvar credencial
+        ps_cmd = f"""
+$cred = Get-Credential -Message 'Digite suas credenciais de ADMIN para o servidor AD'
+if ($cred) {{
+    $cred | Export-Clixml -Path '{cred_file}'
+    Write-Output 'SUCESSO'
+}} else {{
+    Write-Output 'CANCELADO'
+}}
+"""
+        
+        try:
+            resultado = subprocess.run(
+                ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if "SUCESSO" in resultado.stdout:
+                messagebox.showinfo("Sucesso", "Credenciais salvas! Agora você não precisará digitar a senha novamente.")
+                return True
+            else:
+                messagebox.showwarning("Aviso", "Operação cancelada.")
+                return False
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao salvar credenciais: {e}")
+            return False
+    
+    def remover_credencial(self):
+        """Remove credencial salva."""
+        cred_file = self.get_cred_file_path()
+        if cred_file.exists():
+            cred_file.unlink()
+            messagebox.showinfo("Removido", "Credenciais removidas com sucesso.")
+        else:
+            messagebox.showinfo("Info", "Nenhuma credencial salva encontrada.")
+    
+    def get_ps_credential_cmd(self):
+        """Retorna comando PowerShell para obter credencial (salva ou Get-Credential)."""
+        cred_file = self.get_cred_file_path()
+        if cred_file.exists():
+            return f"$cred = Import-Clixml -Path '{cred_file}'"
+        else:
+            return "$cred = Get-Credential -Message 'Credenciais de ADMIN para o servidor AD'"
+    
+    def atualizar_status_credencial(self):
+        """Atualiza o status visual das credenciais salvas."""
+        if hasattr(self, 'lbl_cred_status'):
+            if self.tem_credencial_salva():
+                self.lbl_cred_status.config(text="✅ Credenciais SALVAS - execução remota automática", foreground="green")
+            else:
+                self.lbl_cred_status.config(text="⚠️ Nenhuma credencial salva - será solicitada a cada execução", foreground="orange")
+    
+    def salvar_e_atualizar_credencial(self):
+        """Salva credencial e atualiza a UI."""
+        if self.salvar_credencial_via_powershell():
+            self.atualizar_status_credencial()
+    
+    def remover_e_atualizar_credencial(self):
+        """Remove credencial e atualiza a UI."""
+        self.remover_credencial()
+        self.atualizar_status_credencial()
+    
     def create_widgets(self):
         """Cria todos os widgets da interface."""
         # Frame de status do ambiente
@@ -503,10 +579,19 @@ class InfraToolsApp:
             messagebox.showwarning("Aviso", "Preencha o nome e login primeiro.")
             return
 
+        # Verificar se tem credencial salva
+        tem_cred = self.tem_credencial_salva()
+        
         self.verificacao_result.config(state=tk.NORMAL)
         self.verificacao_result.delete(1.0, tk.END)
         self.verificacao_result.insert(tk.END, "🚀 Iniciando verificação REMOTA...\n")
-        self.verificacao_result.insert(tk.END, "Uma janela pedirá credenciais de ADMIN...\n")
+        
+        if tem_cred:
+            self.verificacao_result.insert(tk.END, "✅ Usando credenciais salvas...\n")
+        else:
+            self.verificacao_result.insert(tk.END, "Uma janela pedirá credenciais de ADMIN...\n")
+            self.verificacao_result.insert(tk.END, "💡 Dica: Vá em Servidor > Salvar Credenciais para não pedir novamente.\n")
+        
         self.verificacao_result.insert(tk.END, "Aguarde...\n")
         self.verificacao_result.config(state=tk.DISABLED)
         self.root.update()
@@ -516,10 +601,12 @@ class InfraToolsApp:
             script_path = self.base_dir / "scripts" / "verify_user.ps1"
             servidor = self.config.get("mremoteng", {}).get("servidor_ad", {}).get("hostname", "172.16.0.26")
             
-            cmd_wrapper = [
-                "powershell", "-ExecutionPolicy", "Bypass", "-Command",
-                f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_path}' -ArgumentList '{login}', '{nome}' -Credential $cred"
-            ]
+            # Obter comando de credencial (salva ou Get-Credential)
+            cred_cmd = self.get_ps_credential_cmd()
+            
+            ps_cmd = f"{cred_cmd}; Invoke-Command -ComputerName {servidor} -FilePath '{script_path}' -ArgumentList '{login}', '{nome}' -Credential $cred"
+            
+            cmd_wrapper = ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd]
             
             try:
                 # Não usar PIPE para stdout/stderr para mostrar a janela de credenciais
@@ -719,19 +806,26 @@ Write-Host "Senha: {senha}"
         script_file = self.base_dir / "temp_remote_script.ps1"
         with open(script_file, "w") as f:
             f.write(cmd_ps)
-            
+        
+        tem_cred = self.tem_credencial_salva()
+        
         self.console_print(f"\n{'='*60}\n")
         self.console_print(f"🚀 INICIANDO EXECUÇÃO REMOTA EM: {servidor}\n")
         self.console_print(f"{'='*60}\n")
-        self.console_print("Uma janela pedirá as credenciais de ADMIN...\n")
+        
+        if tem_cred:
+            self.console_print("✅ Usando credenciais salvas...\n")
+        else:
+            self.console_print("Uma janela pedirá as credenciais de ADMIN...\n")
+        
         self.console_print("Aguarde...\n")
         
         # Executar em thread separada
         def executar_remoto():
-            cmd_wrapper = [
-                "powershell", "-ExecutionPolicy", "Bypass", "-Command",
-                f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_file}' -Credential $cred"
-            ]
+            cred_cmd = self.get_ps_credential_cmd()
+            ps_cmd = f"{cred_cmd}; Invoke-Command -ComputerName {servidor} -FilePath '{script_file}' -Credential $cred"
+            
+            cmd_wrapper = ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd]
             
             try:
                 processo = subprocess.run(
@@ -1166,6 +1260,43 @@ CARGO: Técnico Administrativo"""
             command=self.salvar_config_servidor
         )
         btn_salvar.pack(side=tk.LEFT, padx=5, pady=10)
+        
+        # Frame de credenciais
+        cred_frame = ttk.LabelFrame(self.tab_servidor, text="🔑 Credenciais de Admin (Execução Remota)", padding="15")
+        cred_frame.pack(fill=tk.X, pady=10)
+        
+        # Info sobre credenciais
+        cred_info = ttk.Label(
+            cred_frame,
+            text="Salve suas credenciais de admin para não precisar digitar a senha toda vez.\nAs credenciais são criptografadas e só funcionam no seu usuário Windows.",
+            justify=tk.LEFT
+        )
+        cred_info.pack(anchor=tk.W, pady=5)
+        
+        # Status da credencial
+        self.lbl_cred_status = ttk.Label(
+            cred_frame,
+            text="",
+            font=("Segoe UI", 10)
+        )
+        self.lbl_cred_status.pack(anchor=tk.W, pady=5)
+        self.atualizar_status_credencial()
+        
+        # Botões de credencial
+        btn_cred_frame = ttk.Frame(cred_frame)
+        btn_cred_frame.pack(anchor=tk.W, pady=5)
+        
+        ttk.Button(
+            btn_cred_frame,
+            text="💾 Salvar Credenciais",
+            command=self.salvar_e_atualizar_credencial
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            btn_cred_frame,
+            text="🗑️ Remover Credenciais",
+            command=self.remover_e_atualizar_credencial
+        ).pack(side=tk.LEFT, padx=5)
         
         # Instruções
         instrucoes_frame = ttk.LabelFrame(self.tab_servidor, text="Instruções", padding="10")
