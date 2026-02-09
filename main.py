@@ -145,10 +145,19 @@ if ($cred) {{
             messagebox.showinfo("Info", "Nenhuma credencial salva encontrada.")
     
     def get_ps_credential_cmd(self):
-        """Retorna comando PowerShell para obter credencial (salva ou Get-Credential)."""
+        """Retorna comando PowerShell para obter credencial (salva ou Get-Credential com fallback)."""
         cred_file = self.get_cred_file_path()
         if cred_file.exists():
-            return f"$cred = Import-Clixml -Path '{cred_file}'"
+            # Tentar carregar credencial salva, com fallback para Get-Credential se falhar
+            return f"""
+try {{
+    $cred = Import-Clixml -Path '{cred_file}'
+    if (-not $cred) {{ throw 'Credencial nula' }}
+}} catch {{
+    Write-Host 'Credencial salva invalida, solicitando novamente...'
+    $cred = Get-Credential -Message 'Credenciais de ADMIN para o servidor AD'
+}}
+"""
         else:
             return "$cred = Get-Credential -Message 'Credenciais de ADMIN para o servidor AD'"
     
