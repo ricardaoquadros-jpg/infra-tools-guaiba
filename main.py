@@ -18,6 +18,7 @@ import unicodedata
 import string
 import random
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -494,7 +495,7 @@ class InfraToolsApp:
             self.verificacao_result.config(state=tk.DISABLED)
             
     def verificar_usuario_remoto(self):
-        """Verifica usuário remotamente via Invoke-Command."""
+        """Verifica usuário remotamente via Invoke-Command (em thread separada)."""
         nome = self.entry_nome_novo.get().strip()
         login = self.entry_login_novo.get().strip()
         
@@ -506,81 +507,88 @@ class InfraToolsApp:
         self.verificacao_result.delete(1.0, tk.END)
         self.verificacao_result.insert(tk.END, "🚀 Iniciando verificação REMOTA...\n")
         self.verificacao_result.insert(tk.END, "Uma janela pedirá credenciais de ADMIN...\n")
+        self.verificacao_result.insert(tk.END, "Aguarde...\n")
         self.verificacao_result.config(state=tk.DISABLED)
         self.root.update()
 
-        script_path = self.base_dir / "scripts" / "verify_user.ps1"
-        servidor = self.config.get("mremoteng", {}).get("servidor_ad", {}).get("hostname", "172.16.0.26")
+        # Executar em thread separada para não travar a interface
+        def executar_verificacao():
+            script_path = self.base_dir / "scripts" / "verify_user.ps1"
+            servidor = self.config.get("mremoteng", {}).get("servidor_ad", {}).get("hostname", "172.16.0.26")
+            
+            cmd_wrapper = [
+                "powershell", "-ExecutionPolicy", "Bypass", "-Command",
+                f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_path}' -ArgumentList '{login}', '{nome}' -Credential $cred"
+            ]
+            
+            try:
+                # Não usar PIPE para stdout/stderr para mostrar a janela de credenciais
+                processo = subprocess.run(
+                    cmd_wrapper,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                # Atualizar interface na thread principal
+                self.root.after(0, lambda: self._processar_resultado_verificacao(processo.stdout, processo.stderr))
+                
+            except subprocess.TimeoutExpired:
+                self.root.after(0, lambda: self._mostrar_erro_verificacao("Timeout - verificação demorou muito."))
+            except Exception as e:
+                self.root.after(0, lambda: self._mostrar_erro_verificacao(str(e)))
         
-        # Comando para invocar remotamente passar argumentos
-        # Invoke-Command -FilePath suporta -ArgumentList
-        cmd_wrapper = [
-            "powershell", "-ExecutionPolicy", "Bypass", "-Command",
-            f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_path}' -ArgumentList '{login}', '{nome}' -Credential $cred"
-        ]
+        # Iniciar thread
+        thread = threading.Thread(target=executar_verificacao, daemon=True)
+        thread.start()
+    
+    def _processar_resultado_verificacao(self, stdout, stderr):
+        """Processa o resultado da verificação remota (chamado na thread principal)."""
+        self.verificacao_result.config(state=tk.NORMAL)
+        self.verificacao_result.delete(1.0, tk.END)
         
-        try:
-            processo = subprocess.Popen(
-                cmd_wrapper, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            stdout, stderr = processo.communicate()
-            
-            self.verificacao_result.config(state=tk.NORMAL)
-            self.verificacao_result.delete(1.0, tk.END)
-            
-            if stdout:
-                try:
-                    # Tentar encontrar o JSON na saída (pode ter barulho do Invoke-Command)
-                    # O script retorna JSON no final. Vamos tentar pegar o JSON válido.
-                    # As vezes o output vem com coisas extras do PS Remoting.
-                    # Vamos assumir que o script remote retorna APENAS o JSON limpo se possível,
-                    # mas o Invoke-Command pode serializar diferente.
-                    # Na verdade, o Invoke-Command retorna objetos deserializados. 
-                    # Se o script retorna JSON string, ela vem como string.
+        if stdout:
+            try:
+                json_str = stdout.strip()
+                idx_chave = json_str.find('{')
+                if idx_chave != -1:
+                    json_str = json_str[idx_chave:]
+                
+                resposta = json.loads(json_str)
+                
+                for msg in resposta.get("mensagens", []):
+                    self.verificacao_result.insert(tk.END, f"{msg}\n")
+                
+                usuario_existe = resposta.get("usuario_existe", False)
+                similares = resposta.get("usuarios_similares", [])
+                
+                if usuario_existe:
+                    self.status_verificacao.config(text="❌ Status: USUÁRIO JÁ EXISTE", foreground="red")
+                    self.btn_criar_novo.config(state=tk.DISABLED)
+                elif similares:
+                    self.status_verificacao.config(text=f"⚠️ Status: {len(similares)} SIMILARES", foreground="orange")
+                    self.btn_criar_novo.config(state=tk.NORMAL)
+                else:
+                    self.status_verificacao.config(text="✅ Status: DISPONÍVEL (Remoto)", foreground="green")
+                    self.btn_criar_novo.config(state=tk.NORMAL)
                     
-                    # Vamos tentar limpar e parsear
-                    json_str = stdout.strip()
-                    # Buscar pelo inicio do json se tiver lixo antes
-                    idx_chave = json_str.find('{')
-                    if idx_chave != -1:
-                        json_str = json_str[idx_chave:]
-                    
-                    resposta = json.loads(json_str)
-                    
-                    for msg in resposta.get("mensagens", []):
-                        self.verificacao_result.insert(tk.END, f"{msg}\n")
-                    
-                    usuario_existe = resposta.get("usuario_existe", False)
-                    similares = resposta.get("usuarios_similares", [])
-                    
-                    if usuario_existe:
-                        self.status_verificacao.config(text="❌ Status: USUÁRIO JÁ EXISTE", foreground="red")
-                        self.btn_criar_novo.config(state=tk.DISABLED)
-                    elif similares:
-                        self.status_verificacao.config(text=f"⚠️ Status: {len(similares)} SIMILARES", foreground="orange")
-                        self.btn_criar_novo.config(state=tk.NORMAL)
-                    else:
-                        self.status_verificacao.config(text="✅ Status: DISPONÍVEL (Remoto)", foreground="green")
-                        self.btn_criar_novo.config(state=tk.NORMAL)
-                        
-                except json.JSONDecodeError:
-                    self.verificacao_result.insert(tk.END, "--- Resposta Bruta ---\n")
-                    self.verificacao_result.insert(tk.END, stdout)
-            else:
-                self.verificacao_result.insert(tk.END, "Erro na verificação remota (sem saída).\n")
-                if stderr:
-                    self.verificacao_result.insert(tk.END, stderr)
-            
-            self.verificacao_result.config(state=tk.DISABLED)
-            
-        except Exception as e:
-            self.verificacao_result.config(state=tk.NORMAL)
-            self.verificacao_result.insert(tk.END, f"Erro crítico: {e}")
-            self.verificacao_result.config(state=tk.DISABLED)
+            except json.JSONDecodeError:
+                self.verificacao_result.insert(tk.END, "--- Resposta Bruta ---\n")
+                self.verificacao_result.insert(tk.END, stdout)
+                self.btn_criar_novo.config(state=tk.NORMAL)
+        else:
+            self.verificacao_result.insert(tk.END, "Erro na verificação remota (sem saída).\n")
+            if stderr:
+                self.verificacao_result.insert(tk.END, stderr)
+        
+        self.verificacao_result.config(state=tk.DISABLED)
+    
+    def _mostrar_erro_verificacao(self, erro):
+        """Mostra erro de verificação (chamado na thread principal)."""
+        self.verificacao_result.config(state=tk.NORMAL)
+        self.verificacao_result.delete(1.0, tk.END)
+        self.verificacao_result.insert(tk.END, f"Erro crítico: {erro}")
+        self.verificacao_result.config(state=tk.DISABLED)
     
     def criar_usuario_novo(self):
         """Gera o comando PowerShell para criar usuário no servidor."""
@@ -693,8 +701,8 @@ Write-Host "Senha: {senha}"
         )
         
     def executar_comando_remoto(self):
-        """Executa o comando gerado remotamente no servidor via Invoke-Command."""
-        # Verificar se tem comando na área de transferência (hack simples)
+        """Executa o comando gerado remotamente no servidor via Invoke-Command (em thread separada)."""
+        # Verificar se tem comando na área de transferência
         try:
             cmd_ps = self.root.clipboard_get()
             if "New-ADUser" not in cmd_ps:
@@ -716,48 +724,54 @@ Write-Host "Senha: {senha}"
         self.console_print(f"🚀 INICIANDO EXECUÇÃO REMOTA EM: {servidor}\n")
         self.console_print(f"{'='*60}\n")
         self.console_print("Uma janela pedirá as credenciais de ADMIN...\n")
+        self.console_print("Aguarde...\n")
         
-        # Comando para invocar remotamente
-        # Usa -Authentication Negotiate ou Default. O servidor precisa ter WinRM habilitado.
-        # Se falhar, pode precisar de adicionar o host no TrustedHosts do cliente:
-        # Set-Item WSMan:\localhost\Client\TrustedHosts -Value "172.16.0.26" -Force
-        
-        cmd_wrapper = [
-            "powershell", "-ExecutionPolicy", "Bypass", "-Command",
-            f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_file}' -Credential $cred"
-        ]
-        
-        try:
-            # Executa e captura saída
-            # creationflags=subprocess.CREATE_NO_WINDOW pode esconder a janela de credenciais?
-            # Melhor deixar visível ou usar console normal.
-            processo = subprocess.Popen(
-                cmd_wrapper, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True
-            )
+        # Executar em thread separada
+        def executar_remoto():
+            cmd_wrapper = [
+                "powershell", "-ExecutionPolicy", "Bypass", "-Command",
+                f"$cred = Get-Credential; Invoke-Command -ComputerName {servidor} -FilePath '{script_file}' -Credential $cred"
+            ]
             
-            stdout, stderr = processo.communicate()
-            
-            self.console_print(f"\n--- SAÍDA DO SERVIDOR ---\n")
-            if stdout:
-                self.console_print(stdout)
-            
-            if stderr:
-                self.console_print(f"\n--- ERROS/AVISOS ---\n")
-                self.console_print(stderr)
+            try:
+                processo = subprocess.run(
+                    cmd_wrapper,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
                 
-            if processo.returncode == 0:
-                messagebox.showinfo("Sucesso", "Comando executado remotamente com sucesso!")
-                self.log_evento("EXECUCAO_REMOTA", f"Script executado em {servidor}", {"status": "sucesso"})
-            else:
-                messagebox.showerror("Erro", "Falha na execução remota. Verifique o console.")
-                self.log_evento("EXECUCAO_REMOTA", f"Falha em {servidor}", {"status": "erro", "erro": stderr})
+                self.root.after(0, lambda: self._processar_resultado_criacao(processo.stdout, processo.stderr, processo.returncode, servidor))
                 
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao tentar executar: {e}")
-            self.console_print(f"Erro crítico: {e}\n")
+            except subprocess.TimeoutExpired:
+                self.root.after(0, lambda: self._mostrar_erro_criacao("Timeout - comando demorou muito."))
+            except Exception as e:
+                self.root.after(0, lambda: self._mostrar_erro_criacao(str(e)))
+        
+        thread = threading.Thread(target=executar_remoto, daemon=True)
+        thread.start()
+    
+    def _processar_resultado_criacao(self, stdout, stderr, returncode, servidor):
+        """Processa resultado da criação remota (thread principal)."""
+        self.console_print(f"\n--- SAÍDA DO SERVIDOR ---\n")
+        if stdout:
+            self.console_print(stdout)
+        
+        if stderr:
+            self.console_print(f"\n--- ERROS/AVISOS ---\n")
+            self.console_print(stderr)
+            
+        if returncode == 0:
+            messagebox.showinfo("Sucesso", "Comando executado remotamente com sucesso!")
+            self.log_evento("EXECUCAO_REMOTA", f"Script executado em {servidor}", {"status": "sucesso"})
+        else:
+            messagebox.showerror("Erro", "Falha na execução remota. Verifique o console.")
+            self.log_evento("EXECUCAO_REMOTA", f"Falha em {servidor}", {"status": "erro", "erro": stderr})
+    
+    def _mostrar_erro_criacao(self, erro):
+        """Mostra erro de criação (thread principal)."""
+        self.console_print(f"Erro crítico: {erro}\n")
+        messagebox.showerror("Erro", f"Erro ao tentar executar: {erro}")
     
     def copiar_resultado_novo(self):
         """Copia resultado para área de transferência."""
