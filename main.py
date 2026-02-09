@@ -96,11 +96,12 @@ class InfraToolsApp:
         return self.get_cred_file_path().exists()
     
     def salvar_credencial_via_powershell(self):
-        """Abre dialog para salvar credenciais usando PowerShell."""
+        """Abre dialog para salvar credenciais usando PowerShell (em thread separada)."""
         cred_file = self.get_cred_file_path()
         
-        # PowerShell para pedir e salvar credencial
-        ps_cmd = f"""
+        # Executar em thread separada para não travar a interface
+        def executar_salvar():
+            ps_cmd = f"""
 $cred = Get-Credential -Message 'Digite suas credenciais de ADMIN para o servidor AD'
 if ($cred) {{
     $cred | Export-Clixml -Path '{cred_file}'
@@ -109,24 +110,30 @@ if ($cred) {{
     Write-Output 'CANCELADO'
 }}
 """
-        
-        try:
-            resultado = subprocess.run(
-                ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
             
-            if "SUCESSO" in resultado.stdout:
-                messagebox.showinfo("Sucesso", "Credenciais salvas! Agora você não precisará digitar a senha novamente.")
-                return True
-            else:
-                messagebox.showwarning("Aviso", "Operação cancelada.")
-                return False
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao salvar credenciais: {e}")
-            return False
+            try:
+                resultado = subprocess.run(
+                    ["powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                if "SUCESSO" in resultado.stdout:
+                    self.root.after(0, lambda: self._credencial_salva_sucesso())
+                else:
+                    self.root.after(0, lambda: messagebox.showwarning("Aviso", "Operação cancelada."))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Erro", f"Erro ao salvar credenciais: {e}"))
+        
+        thread = threading.Thread(target=executar_salvar, daemon=True)
+        thread.start()
+        return True  # Retorna imediatamente, o resultado vem via callback
+    
+    def _credencial_salva_sucesso(self):
+        """Callback quando credencial é salva com sucesso."""
+        messagebox.showinfo("Sucesso", "Credenciais salvas! Agora você não precisará digitar a senha novamente.")
+        self.atualizar_status_credencial()
     
     def remover_credencial(self):
         """Remove credencial salva."""
